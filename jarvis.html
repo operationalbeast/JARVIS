@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>J.A.R.V.I.S.</title>
+<style>
+:root{--bg:#040a12;--panel:#08131f;--line:#10374c;--ink:#d6f1ff;--dim:#7aa3b8;--acc:#2ee6ff;--ok:#7dffb2;--warn:#ffb347;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#0b2236,var(--bg));color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif;min-height:100vh}
+header{text-align:center;padding:18px 12px 0}
+h1{margin:0;font-weight:300;letter-spacing:.5em;font-size:1.5rem;color:var(--acc);text-indent:.5em}
+#status{color:var(--dim);font-size:.9rem;min-height:1.4em}
+#reactor{width:220px;height:220px;display:block;margin:4px auto}
+main{display:grid;gap:14px;padding:12px;max-width:1100px;margin:auto;grid-template-columns:1fr}
+@media(min-width:860px){main{grid-template-columns:1fr 1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+h2{margin:0 0 8px;font-size:1rem;font-weight:600;color:var(--acc)}
+pre{white-space:pre-wrap;font:inherit;margin:0;color:var(--ink)}
+input,button{font:inherit;color:var(--ink);background:#0b1c2c;border:1px solid var(--line);border-radius:4px;padding:8px 10px}
+input{flex:1;min-width:0}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.row{display:flex;gap:6px;margin-top:8px}
+.t{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #0c2535}
+.t span.m{color:var(--dim);font-size:.85rem;margin-left:auto}
+.t.done b{text-decoration:line-through;color:var(--dim);font-weight:400}
+.t .x{border:0;background:none;color:var(--dim);padding:2px 6px}
+.hi{color:var(--warn)}.od{color:var(--bad)}
+#log{max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.u{align-self:flex-end;background:#0e2a40;padding:6px 10px;border-radius:8px 8px 2px 8px;max-width:85%}
+.j{align-self:flex-start;background:#0a1f30;padding:6px 10px;border-radius:8px 8px 8px 2px;max-width:92%;white-space:pre-wrap}
+#mic.on{border-color:var(--ok);color:var(--ok)}
+small,.note{color:var(--dim);font-size:.85rem}
+details{margin-top:8px}label{display:block;margin:8px 0 2px}
+@media(prefers-reduced-motion:reduce){#reactor{opacity:.9}}
+</style>
+</head>
+<body>
+<header><h1>J.A.R.V.I.S.</h1><canvas id="reactor" width="440" height="440"></canvas><div id="status">Online. Local mode.</div></header>
+<main>
+<section style="grid-column:1/-1"><h2>Morning briefing</h2><pre id="brief"></pre><div class="row"><button id="bBtn">Refresh briefing</button><button id="bSay">Read aloud</button></div></section>
+
+<section><h2>Tasks</h2><div id="tasks"></div>
+<div class="row"><input id="tIn" placeholder="Add a task, e.g. Grade essays due tomorrow high" aria-label="New task"><button id="tAdd">Add</button></div>
+<p class="note">Words that work: due today, due tomorrow, due friday, due 2026-11-02, high.</p></section>
+
+<section><h2>Talk to JARVIS</h2><div id="log" aria-live="polite"></div>
+<div class="row"><button id="mic" aria-label="Hold to talk">Mic</button><input id="cIn" placeholder="Type or press Mic and speak" aria-label="Message"><button id="cSend">Send</button></div>
+<details><summary>Commands that work with no AI key</summary><p class="note">add [task] · done 3 · delete task 3 · remember [fact] · forget 2 · briefing · help</p></details></section>
+
+<section><h2>Memory</h2><div id="mem"></div>
+<p class="note">JARVIS stores nothing unless you say “remember …” or add it here. Everything is saved only in this browser.</p>
+<div class="row"><input id="mIn" placeholder="Add something JARVIS should remember" aria-label="New memory"><button id="mAdd">Save</button></div>
+<div class="row"><button id="exp">Export backup</button><button id="clr">Erase everything</button></div></section>
+
+<section><h2>Settings</h2>
+<label><input type="checkbox" id="voice" style="flex:none"> Speak replies aloud</label>
+<details><summary>Optional: smarter brain (free Gemini key)</summary>
+<p class="note">Without a key, JARVIS runs fully offline using the commands above. With a key, your questions plus your tasks and memories are sent to Google’s Gemini API. Free-tier availability and limits change, so check Google AI Studio. The key stays in this browser only; never paste it into a chat.</p>
+<label for="key">API key</label><input id="key" type="password" autocomplete="off">
+<label for="model">Model name</label><input id="model">
+<div class="row"><button id="save">Save settings</button></div></details></section>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const DAYS=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+let S={tasks:[],mem:[],chat:[],next:1,cfg:{key:"",model:"gemini-2.0-flash",voice:true}};
+try{const d=JSON.parse(localStorage.getItem("jarvis")||"{}");S={...S,...d,cfg:{...S.cfg,...(d.cfg||{})}}}catch(e){}
+const save=()=>{try{localStorage.setItem("jarvis",JSON.stringify(S))}catch(e){setStatus("Could not save: browser storage blocked.")}};
+const iso=d=>d.toLocaleDateString("en-CA");
+const today=()=>iso(new Date());
+function el(t,p,...k){const e=document.createElement(t);Object.assign(e,p||{});k.forEach(c=>e.append(c));return e}
+let state="idle";
+function setState(s){state=s}
+function setStatus(t){$("#status").textContent=t}
+
+/* ---------- dates ---------- */
+function parseDue(w){
+  w=w.toLowerCase();const d=new Date();
+  if(w==="today")return iso(d);
+  if(w==="tomorrow"){d.setDate(d.getDate()+1);return iso(d)}
+  if(/^\d{4}-\d{2}-\d{2}$/.test(w))return w;
+  const i=DAYS.findIndex(x=>x.startsWith(w.slice(0,3)));
+  if(i>=0){let n=(i-d.getDay()+7)%7||7;d.setDate(d.getDate()+n);return iso(d)}
+  return "";
+}
+
+/* ---------- tasks ---------- */
+function addTask(text){
+  let pri="normal",due="";
+  const m=text.match(/\bdue (today|tomorrow|\d{4}-\d{2}-\d{2}|[a-z]{3,9})\b/i);
+  if(m){due=parseDue(m[1]);if(due)text=text.replace(m[0],"")}
+  if(/\b(high|urgent)\b/i.test(text)){pri="high";text=text.replace(/\b(high|urgent)\b/ig,"")}
+  text=text.replace(/\s+/g," ").trim();
+  if(!text)return null;
+  const t={id:S.next++,title:text,due,pri,done:false,created:Date.now()};
+  S.tasks.push(t);save();renderTasks();return t;
+}
+function renderTasks(){
+  const box=$("#tasks");box.replaceChildren();
+  const t0=today();
+  const list=[...S.tasks].sort((a,b)=>a.done-b.done||(a.due||"9").localeCompare(b.due||"9"));
+  if(!list.length)box.append(el("p",{className:"note",textContent:"No tasks yet. Add your first one below."}));
+  list.forEach(t=>{
+    const cb=el("input",{type:"checkbox",checked:t.done,ariaLabel:"Done"});cb.style.flex="none";
+    cb.onchange=()=>{t.done=cb.checked;save();renderTasks();renderBrief()};
+    const meta=el("span",{className:"m"});
+    if(t.pri==="high")meta.append(el("span",{className:"hi",textContent:"high "}));
+    if(t.due)meta.append(el("span",{className:(!t.done&&t.due<t0)?"od":"",textContent:t.due}));
+    const x=el("button",{className:"x",textContent:"×",ariaLabel:"Delete task"});
+    x.onclick=()=>{S.tasks=S.tasks.filter(y=>y!==t);save();renderTasks();renderBrief()};
+    box.append(el("div",{className:"t"+(t.done?" done":"")},cb,el("b",{textContent:"#"+t.id+" "+t.title}),meta,x));
+  });
+}
+
+/* ---------- memory ---------- */
+function renderMem(){
+  const box=$("#mem");box.replaceChildren();
+  if(!S.mem.length)box.append(el("p",{className:"note",textContent:"Nothing remembered yet."}));
+  S.mem.forEach(m=>{
+    const x=el("button",{className:"x",textContent:"×",ariaLabel:"Forget this"});
+    x.onclick=()=>{S.mem=S.mem.filter(y=>y!==m);save();renderMem()};
+    box.append(el("div",{className:"t"},el("b",{textContent:"#"+m.id+" "+m.text,style:"font-weight:400"}),x));
+  });
+}
+function addMem(text){const m={id:S.next++,text:text.trim(),at:today()};S.mem.push(m);save();renderMem();return m}
+
+/* ---------- briefing (works offline, no AI) ---------- */
+function briefingText(){
+  const t0=today(),open=S.tasks.filter(x=>!x.done),h=new Date().getHours();
+  const od=open.filter(x=>x.due&&x.due<t0),dt=open.filter(x=>x.due===t0);
+  const hi=open.filter(x=>x.pri==="high"&&!od.includes(x)&&!dt.includes(x));
+  const old=open.filter(x=>!x.due&&Date.now()-x.created>7*864e5);
+  const L=[(h<12?"Good morning":h<18?"Good afternoon":"Good evening")+". It is "+new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})+"."];
+  if(!open.length)return L[0]+" Your task list is empty. Tell me what matters this week.";
+  if(od.length)L.push("Overdue: "+od.map(x=>x.title).join("; ")+".");
+  if(dt.length)L.push("Due today: "+dt.map(x=>x.title).join("; ")+".");
+  if(hi.length)L.push("High priority: "+hi.map(x=>x.title).join("; ")+".");
+  if(old.length)L.push("Neglected for over a week with no date: "+old.map(x=>x.title).join("; ")+". Schedule them or drop them.");
+  const first=od[0]||dt[0]||hi[0]||open[0];
+  L.push("Recommended first move: "+first.title+".");
+  L.push("Calendar conflicts: not available yet, since no calendar is connected.");
+  return L.join("\n");
+}
+function renderBrief(){$("#brief").textContent=briefingText()}
+
+/* ---------- chat ---------- */
+function say(who,text){
+  S.chat.push({r:who,t:text});S.chat=S.chat.slice(-30);save();
+  $("#log").append(el("div",{className:who==="u"?"u":"j",textContent:text}));
+  $("#log").scrollTop=1e6;
+}
+function speak(text){
+  if(!S.cfg.voice||!("speechSynthesis" in window))return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text.replace(/[#*_]/g,""));
+  u.rate=1;u.onstart=()=>setState("speaking");u.onend=()=>setState("idle");u.onerror=()=>setState("idle");
+  speechSynthesis.speak(u);
+}
+const HELP="Offline commands: add [task] (optionally due tomorrow, high), done 3, delete task 3, remember [fact], forget 2, briefing. For open conversation, add a Gemini key in Settings.";
+async function handle(q){
+  let m;q=q.trim();if(!q)return;
+  say("u",q);let r;
+  if((m=q.match(/^(?:add|task)\s+(?:task\s+)?(.+)/i))){const t=addTask(m[1]);r=t?"Added #"+t.id+": "+t.title+(t.due?", due "+t.due:"")+".":"I could not find a task in that."}
+  else if((m=q.match(/^(?:done|complete)\s+#?(\d+)/i))){const t=S.tasks.find(x=>x.id==m[1]);if(t){t.done=true;save();renderTasks();renderBrief();r="Marked #"+t.id+" complete."}else r="No task with that number."}
+  else if((m=q.match(/^(?:delete|remove)\s+task\s+#?(\d+)/i))){const n=S.tasks.length;S.tasks=S.tasks.filter(x=>x.id!=m[1]);save();renderTasks();renderBrief();r=S.tasks.length<n?"Deleted.":"No task with that number."}
+  else if((m=q.match(/^remember\s+(?:that\s+)?(.+)/i))){const x=addMem(m[1]);r="Saved to memory as #"+x.id+". You can delete it any time."}
+  else if((m=q.match(/^forget\s+#?(\d+)/i))){const n=S.mem.length;S.mem=S.mem.filter(x=>x.id!=m[1]);save();renderMem();r=S.mem.length<n?"Forgotten.":"No memory with that number."}
+  else if(/^(briefing|brief me|morning|good morning)/i.test(q)){renderBrief();r=briefingText()}
+  else if(/^help/i.test(q))r=HELP;
+  else if(S.cfg.key){setState("thinking");setStatus("Thinking…");try{r=await ask(q)}catch(e){r="The AI request failed ("+e.message+"). Check the key and model name in Settings, or use the offline commands."}setStatus("Online.")}
+  else r="I only know offline commands until a Gemini key is added. "+HELP;
+  setState("idle");say("j",r);speak(r);
+}
+async function ask(q){
+  const sys="You are J.A.R.V.I.S., a calm, articulate, occasionally witty chief of staff for a teacher and aspiring entrepreneur. Be concise: at most four sentences unless asked for depth. Recommend next actions, respectfully challenge weak assumptions, and note patterns. You cannot change tasks or memory yourself; when something should be saved or added, tell the user the exact command (for example: remember ..., add ...). Never claim background monitoring or integrations that do not exist. Today is "+today()+". Open tasks: "+JSON.stringify(S.tasks.filter(t=>!t.done).map(t=>({id:t.id,title:t.title,due:t.due,pri:t.pri})))+". Memory: "+JSON.stringify(S.mem.map(x=>x.text))+".";
+  const hist=S.chat.slice(-9,-1).map(x=>({role:x.r==="u"?"user":"model",parts:[{text:x.t}]}));
+  const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(S.cfg.model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":S.cfg.key},body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents:[...hist,{role:"user",parts:[{text:q}]}]})});
+  if(!res.ok)throw new Error("HTTP "+res.status);
+  const j=await res.json();
+  return (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text).join("")||"No reply came back.";
+}
+
+/* ---------- voice input ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+$("#mic").onclick=()=>{
+  if(!SR){say("j","Voice input needs Chrome or Edge. Typing works everywhere.");return}
+  if(rec){rec.stop();return}
+  speechSynthesis.cancel();rec=new SR();rec.lang="en-US";rec.interimResults=false;
+  rec.onstart=()=>{setState("listening");setStatus("Listening…");$("#mic").classList.add("on")};
+  rec.onresult=e=>handle(e.results[0][0].transcript);
+  rec.onerror=e=>{say("j","Microphone problem: "+e.error+". If it says not-allowed, allow the mic for this page or open the file through a local server (see the setup notes).")};
+  rec.onend=()=>{rec=null;$("#mic").classList.remove("on");if(state==="listening")setState("idle");setStatus("Online.")};
+  rec.start();
+};
+
+/* ---------- wiring ---------- */
+$("#cSend").onclick=()=>{handle($("#cIn").value);$("#cIn").value=""};
+$("#cIn").onkeydown=e=>{if(e.key==="Enter")$("#cSend").click()};
+$("#tAdd").onclick=()=>{addTask($("#tIn").value);$("#tIn").value="";renderBrief()};
+$("#tIn").onkeydown=e=>{if(e.key==="Enter")$("#tAdd").click()};
+$("#mAdd").onclick=()=>{if($("#mIn").value.trim())addMem($("#mIn").value);$("#mIn").value=""};
+$("#bBtn").onclick=renderBrief;
+$("#bSay").onclick=()=>speak(briefingText());
+$("#exp").onclick=()=>{const a=el("a",{href:URL.createObjectURL(new Blob([JSON.stringify({...S,cfg:{...S.cfg,key:""}},null,2)],{type:"application/json"})),download:"jarvis-backup.json"});a.click()};
+$("#clr").onclick=()=>{if(confirm("Erase all tasks, memories, chat, and settings from this browser?")){try{localStorage.removeItem("jarvis")}catch(e){}location.reload()}};
+$("#save").onclick=()=>{S.cfg.key=$("#key").value.trim();S.cfg.model=$("#model").value.trim()||"gemini-2.0-flash";save();setStatus(S.cfg.key?"Online. Gemini brain enabled.":"Online. Local mode.")};
+$("#voice").onchange=e=>{S.cfg.voice=e.target.checked;save()};
+$("#voice").checked=S.cfg.voice;$("#key").value=S.cfg.key;$("#model").value=S.cfg.model;
+if(S.cfg.key)setStatus("Online. Gemini brain enabled.");
+S.chat.forEach(x=>$("#log").append(el("div",{className:x.r==="u"?"u":"j",textContent:x.t})));
+renderTasks();renderMem();renderBrief();
+
+/* ---------- reactor ---------- */
+const cv=$("#reactor"),c=cv.getContext("2d");let ph=0;
+function draw(){
+  const W=cv.width,cx=W/2;c.clearRect(0,0,W,W);
+  ph+={idle:.008,listening:.03,speaking:.05,thinking:.09}[state];
+  const col=state==="listening"?"#7dffb2":state==="thinking"?"#ffb347":"#2ee6ff";
+  const p=1+(state==="speaking"?.08*Math.sin(ph*14):.03*Math.sin(ph*4));
+  const g=c.createRadialGradient(cx,cx,4,cx,cx,cx*.6*p);g.addColorStop(0,col);g.addColorStop(1,"transparent");
+  c.globalAlpha=.5;c.fillStyle=g;c.beginPath();c.arc(cx,cx,cx*.6*p,0,7);c.fill();c.globalAlpha=1;
+  c.strokeStyle=col;
+  [[.92,2,[8,10],1],[.74,4,[46,16],-1.6],[.5,2,[3,9],2.2]].forEach(([r,lw,d,dir])=>{
+    c.lineWidth=lw;c.setLineDash(d);c.save();c.translate(cx,cx);c.rotate(ph*dir);
+    c.beginPath();c.arc(0,0,cx*r*p*.98,0,7);c.stroke();c.restore();
+  });
+  c.setLineDash([]);requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
